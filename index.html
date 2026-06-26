@@ -539,10 +539,16 @@ const EMBEDDED_NOTICIAS = [
       <div class="max-w-2xl mx-auto">
         <div class="flex items-center justify-between mb-4">
           <span id="news-lang-badge" class="text-xs px-2 py-1 rounded-full bg-gray-800 text-gray-400 uppercase tracking-wider"></span>
-          <button id="copy-news-btn" class="flex items-center gap-1.5 text-xs text-gray-400 hover:text-teal-400 transition-colors px-3 py-1.5 rounded border border-gray-700 hover:border-teal-600 cursor-pointer" title="Copiar texto de la noticia">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
-            <span id="copy-btn-text">Copiar noticia</span>
-          </button>
+          <div class="flex items-center gap-2">
+            <button id="translate-news-btn" class="hidden flex items-center gap-1.5 text-xs text-gray-400 hover:text-teal-400 transition-colors px-3 py-1.5 rounded border border-gray-700 hover:border-teal-600 cursor-pointer" title="Traducir noticia al español">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"/></svg>
+              <span id="translate-btn-text">Traducir</span>
+            </button>
+            <button id="copy-news-btn" class="flex items-center gap-1.5 text-xs text-gray-400 hover:text-teal-400 transition-colors px-3 py-1.5 rounded border border-gray-700 hover:border-teal-600 cursor-pointer" title="Copiar texto de la noticia">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+              <span id="copy-btn-text">Copiar noticia</span>
+            </button>
+          </div>
         </div>
         <article id="news-text" class="font-serif text-lg leading-relaxed text-gray-200 whitespace-pre-wrap"></article>
       </div>
@@ -637,6 +643,8 @@ let state = {
   selectedTema: null,
   selectedImagen: null,
   isRestored: false,
+  isTranslated: false,
+  translatedText: '',
 };
 
 function fisherYatesShuffle(arr) {
@@ -712,6 +720,37 @@ function loadProgress(alias) {
   try { return JSON.parse(raw); } catch { return null; }
 }
 
+async function translateText(text, fromLang, toLang) {
+  const chunks = [];
+  const maxLen = 500;
+  let remaining = text;
+  while (remaining.length > 0) {
+    if (remaining.length <= maxLen) {
+      chunks.push(remaining);
+      break;
+    }
+    let splitAt = remaining.lastIndexOf('\n', maxLen);
+    if (splitAt <= 0) splitAt = remaining.lastIndexOf('. ', maxLen);
+    if (splitAt <= 0) splitAt = maxLen;
+    chunks.push(remaining.substring(0, splitAt + 1));
+    remaining = remaining.substring(splitAt + 1);
+  }
+
+  const translatedChunks = [];
+  for (const chunk of chunks) {
+    const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(chunk)}&langpair=${fromLang}|${toLang}`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error('Error en la traducción');
+    const data = await resp.json();
+    if (data.responseStatus === 200) {
+      translatedChunks.push(data.responseData.translatedText);
+    } else {
+      translatedChunks.push(chunk);
+    }
+  }
+  return translatedChunks.join('');
+}
+
 function renderCurrentNews() {
   const news = state.newsSet[state.currentIndex];
   const total = state.newsSet.length;
@@ -721,7 +760,18 @@ function renderCurrentNews() {
   document.getElementById('progress-label').textContent = `Noticia ${idx} de ${total}${restoredLabel}`;
   document.getElementById('progress-bar').style.width = `${(idx / total) * 100}%`;
   document.getElementById('news-text').textContent = news.texto;
-  document.getElementById('news-lang-badge').textContent = news.idioma === 'es' ? 'Español' : 'China';
+  document.getElementById('news-lang-badge').textContent = news.idioma === 'es' ? 'Español' : 'Chino';
+
+  state.isTranslated = false;
+  state.translatedText = '';
+  const translateBtn = document.getElementById('translate-news-btn');
+  const translateBtnText = document.getElementById('translate-btn-text');
+  if (news.idioma === 'zh' || news.idioma === 'china') {
+    translateBtn.classList.remove('hidden');
+    translateBtnText.textContent = 'Traducir';
+  } else {
+    translateBtn.classList.add('hidden');
+  }
 
   state.selectedTema = null;
   state.selectedImagen = null;
@@ -891,6 +941,43 @@ document.getElementById('copy-news-btn').addEventListener('click', () => {
     btnText.textContent = '¡Copiado!';
     setTimeout(() => { btnText.textContent = 'Copiar noticia'; }, 2000);
   });
+});
+
+document.getElementById('translate-news-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('translate-news-btn');
+  const btnText = document.getElementById('translate-btn-text');
+  const newsTextEl = document.getElementById('news-text');
+  const news = state.newsSet[state.currentIndex];
+
+  if (state.isTranslated) {
+    newsTextEl.textContent = news.texto;
+    state.isTranslated = false;
+    btnText.textContent = 'Traducir';
+    return;
+  }
+
+  if (state.translatedText) {
+    newsTextEl.textContent = state.translatedText;
+    state.isTranslated = true;
+    btnText.textContent = 'Ver original';
+    return;
+  }
+
+  btn.disabled = true;
+  btnText.textContent = 'Traduciendo...';
+
+  try {
+    const translated = await translateText(news.texto, 'zh', 'es');
+    state.translatedText = translated;
+    newsTextEl.textContent = translated;
+    state.isTranslated = true;
+    btnText.textContent = 'Ver original';
+  } catch (err) {
+    btnText.textContent = 'Error';
+    setTimeout(() => { btnText.textContent = 'Traducir'; }, 2000);
+  } finally {
+    btn.disabled = false;
+  }
 });
 
 document.getElementById('send-btn').addEventListener('click', async () => {
